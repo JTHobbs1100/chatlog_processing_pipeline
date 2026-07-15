@@ -1,0 +1,60 @@
+[project]
+name = "chatlog-processing-pipeline"
+version = "0.1.0"
+description = "Parse, anonymize, and review exported chat transcripts"
+readme = "README.md"
+authors = [{ name = "Jared Moore" }]
+requires-python = ">=3.11"
+dependencies = [
+  "python-docx",
+  "pdfminer.six",
+  "striprtf",
+  "pymupdf",
+  "presidio-analyzer",
+  "presidio-anonymizer",
+  "spacy",
+  "en-core-web-lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl",
+  "faker",
+  "tqdm",
+  "llm-delusions-annotations",
+]
+
+[project.scripts]
+process_chats = "chatlog_processing_pipeline.commands:main"
+process_chats_plan = "chatlog_processing_pipeline.parse_plan:main"
+format_chats_html = "chatlog_processing_pipeline.html_formatter:main"
+find_duplicate_contents = "chatlog_processing_pipeline.find_duplicate_contents:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+chatlog_processing_pipeline = ["assets/*.css", "assets/*.js"]
+
+[tool.uv.sources]
+llm-delusions-annotations = { path = "../llm-delusions-annotations", editable = true }
+
+[dependency-groups]
+dev = [
+  "black==24.8.0",
+  "isort==5.13.2",
+  "pylint==3.3.1",
+  "pytest>=8.0.0",
+]
+
+[tool.black]
+line-length = 88
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.pylint.reports]
+output-format = "colorized"

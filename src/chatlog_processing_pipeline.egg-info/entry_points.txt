@@ -1,0 +1,5 @@
+[console_scripts]
+find_duplicate_contents = chatlog_processing_pipeline.find_duplicate_contents:main
+format_chats_html = chatlog_processing_pipeline.html_formatter:main
+process_chats = chatlog_processing_pipeline.commands:main
+process_chats_plan = chatlog_processing_pipeline.parse_plan:main
