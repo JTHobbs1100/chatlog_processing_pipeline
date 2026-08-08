@@ -53,6 +53,7 @@ class FakerState:
         self._lock = threading.Lock()
         self._cache: Dict[Tuple[str, str], str] = {}
         self._recent_keys: List[Tuple[str, str]] = []
+        self._mapping_counts: Dict[Tuple[str, str], int] = {}
 
     def replacement(self, entity_type: str, original: str) -> str:
         """Return a deterministic faker replacement for (entity_type, original)."""
@@ -62,10 +63,12 @@ class FakerState:
         with self._lock:
             cached = self._cache.get(key)
             if cached is not None:
+                self._mapping_counts[key] = self._mapping_counts.get(key, 0) + 1
                 return cached
             value = self._generate(norm_type, source)
             self._cache[key] = value
             self._recent_keys.append(key)
+            self._mapping_counts[key] = 1
             return value
 
     def _generate(self, entity_type: str, original: str) -> str:
@@ -86,6 +89,21 @@ class FakerState:
             values = [self._cache[k] for k in self._recent_keys]
             self._recent_keys.clear()
         return values
+
+    def consume_mappings(self) -> List[Dict[str, object]]:
+        """Return exact original-to-fake mappings and reset occurrence counts."""
+        with self._lock:
+            mappings = [
+                {
+                    "entity_type": entity_type,
+                    "original": original,
+                    "replacement": self._cache[(entity_type, original)],
+                    "count": count,
+                }
+                for (entity_type, original), count in self._mapping_counts.items()
+            ]
+            self._mapping_counts.clear()
+        return mappings
 
 
 def op_params_for(

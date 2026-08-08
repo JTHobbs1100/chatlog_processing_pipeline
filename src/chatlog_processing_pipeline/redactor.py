@@ -280,6 +280,42 @@ def _attach_fake_identifiers(obj, identifiers: List[str]) -> None:
             obj["fake_identifiers"] = identifiers
 
 
+def _write_mapping_audit(
+    path: Optional[Path],
+    *,
+    source_path: Path,
+    destination_path: Path,
+    content_faker_state: Optional[FakerState],
+    name_faker_state: Optional[FakerState],
+) -> None:
+    """Write a private sidecar containing exact Faker mappings for one file."""
+    if path is None:
+        return
+    mappings: List[Dict[str, object]] = []
+    for scope, state in (
+        ("content", content_faker_state),
+        ("name_or_path", name_faker_state),
+    ):
+        if state is None:
+            continue
+        mappings.extend(
+            {"scope": scope, **mapping} for mapping in state.consume_mappings()
+        )
+    if not mappings:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    payload = {
+        "warning": "Contains original PII. Keep private and do not publish.",
+        "source_path": str(source_path),
+        "destination_path": str(destination_path),
+        "mappings": mappings,
+    }
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=True, indent=2)
+        handle.write("\n")
+    path.chmod(0o600)
+
+
 def _build_redaction_params_from_task(
     task: Dict[str, object],
 ) -> Dict[str, object]:
@@ -339,6 +375,11 @@ def _build_redaction_params_from_task(
         "name_allow_list_match": str(task["name_allow_list_match"]),
         "name_faker_state": name_faker_state,
         "blocklist_terms": extra_terms,
+        "mapping_audit_path": (
+            Path(str(task["mapping_audit_path"]))
+            if task.get("mapping_audit_path")
+            else None
+        ),
     }
     return params
 
@@ -430,6 +471,7 @@ def _redact_single_file(
     name_allow_list_match: str,
     name_faker_state: Optional[FakerState],
     blocklist_terms: Optional[List[str]] = None,
+    mapping_audit_path: Optional[Path] = None,
 ) -> Tuple[int, int, int]:
     """Apply redaction to a single file and report the outcome counters."""
 
@@ -1053,10 +1095,19 @@ def _redact_single_file(
 
     is_text_like = (src.suffix.lower() in TEXT_EXTS) or is_text_file(src, include_all)
     if not is_text_like:
-        return _handle_nontext()
-    if src.suffix.lower() == ".json":
-        return _process_json_file()
-    return _process_text_file()
+        result = _handle_nontext()
+    elif src.suffix.lower() == ".json":
+        result = _process_json_file()
+    else:
+        result = _process_text_file()
+    _write_mapping_audit(
+        mapping_audit_path,
+        source_path=src,
+        destination_path=dst,
+        content_faker_state=content_faker_state,
+        name_faker_state=name_faker_state,
+    )
+    return result
 
 
 def run_redaction(
@@ -1097,6 +1148,7 @@ def run_redaction(
     no_progress: bool,
     verbose: bool,
     faker_locale: Optional[str] = None,
+    mapping_audit_dir: Optional[Path] = None,
 ) -> Dict[str, int]:
     """
     Redact PII in both file contents and path names using Microsoft Presidio.
@@ -1110,6 +1162,9 @@ def run_redaction(
     in_dir = Path(in_dir).resolve()
     out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
+    if mapping_audit_dir is not None:
+        mapping_audit_dir = Path(mapping_audit_dir).resolve()
+        mapping_audit_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
 
     analyzer = _build_analyzer(lang, spacy_max_length)
     locale = (
@@ -1265,6 +1320,16 @@ def run_redaction(
                 "verbose": verbose,
                 "no_progress": True if jobs and jobs > 1 else no_progress,
                 "blocklist_terms": blocklist_terms,
+                "mapping_audit_path": (
+                    str(
+                        mapping_audit_dir
+                        / src.relative_to(in_dir).with_suffix(
+                            src.suffix + ".mappings.json"
+                        )
+                    )
+                    if mapping_audit_dir is not None
+                    else None
+                ),
             }
             tasks.append(task)
         except (OSError, RuntimeError, ValueError) as exc:

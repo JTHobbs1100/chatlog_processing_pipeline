@@ -149,6 +149,19 @@ If you pass `--metadata-csv <PATH>`, columns whose names contain `contact` or
 `identifier` are used to seed the anonymization blocklist. Full phrases,
 individual tokens, and discovered email addresses are added.
 
+Use `--allow-list-file <PATH>` to keep reviewed false positives unchanged in
+message content. The option can be repeated and merged with `--allow-list`.
+Files may be newline-delimited text, a JSON string list, or a JSON object with
+an `original_keys` or `allow_list` string list. `--name-allow-list-file` applies
+the same behavior to file and directory names. Exact matching remains the
+default; select `--allow-list-match regex` only for intentionally written
+regular expressions.
+
+For a private review of every Faker replacement, pass
+`--mapping-audit-dir <DIR>`. The directory receives one sidecar per processed
+file with the entity type, original span, replacement, and occurrence count.
+These sidecars contain original PII and must not be published or committed.
+
 ## Duplicate Checking
 
 `find_duplicate_contents` scans parsed JSON trees for exact duplicated

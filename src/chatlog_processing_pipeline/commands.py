@@ -16,6 +16,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from .allow_lists import merge_allow_lists
 from .processor import ParseMeta, _process_one_file
 from .redactor import run_redaction
 from .textloaders import LoadError
@@ -160,6 +161,11 @@ def main() -> None:
                 if args.metadata_csv
                 else None
             ),
+            mapping_audit_dir=(
+                Path(args.mapping_audit_dir).expanduser().resolve()
+                if args.mapping_audit_dir
+                else None
+            ),
             lang=args.lang,
             entities=args.entities,
             score_threshold=args.threshold,
@@ -168,7 +174,7 @@ def main() -> None:
             mask_char=args.mask_char,
             mask_chars_to_mask=args.mask_chars_to_mask,
             mask_from_end=args.mask_from_end,
-            allow_list=args.allow_list,
+            allow_list=merge_allow_lists(args.allow_list, args.allow_list_file),
             allow_list_match=args.allow_list_match,
             name_entities=args.name_entities,
             name_threshold=args.name_threshold,
@@ -177,7 +183,9 @@ def main() -> None:
             name_mask_char=args.name_mask_char,
             name_mask_chars_to_mask=args.name_mask_chars_to_mask,
             name_mask_from_end=args.name_mask_from_end,
-            name_allow_list=args.name_allow_list,
+            name_allow_list=merge_allow_lists(
+                args.name_allow_list, args.name_allow_list_file
+            ),
             name_allow_list_match=args.name_allow_list_match,
             chunk_size=args.chunk_size,
             chunk_break_window=args.chunk_break_window,
@@ -252,6 +260,15 @@ def _add_anon_args(p: argparse.ArgumentParser) -> None:
         "--allow-list", nargs="*", default=None, help="Terms/regex to allow in content"
     )
     p.add_argument(
+        "--allow-list-file",
+        action="append",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Load content exclusions from a text or JSON file; repeat to merge files"
+        ),
+    )
+    p.add_argument(
         "--allow-list-match",
         choices=["exact", "regex"],
         default="exact",
@@ -300,6 +317,13 @@ def _add_anon_args(p: argparse.ArgumentParser) -> None:
         nargs="*",
         default=None,
         help="Terms/regex to allow in names (not anonymized)",
+    )
+    p.add_argument(
+        "--name-allow-list-file",
+        action="append",
+        default=None,
+        metavar="PATH",
+        help="Load name exclusions from a text or JSON file; repeat to merge files",
     )
     p.add_argument(
         "--name-allow-list-match",
@@ -361,6 +385,14 @@ def _add_anon_args(p: argparse.ArgumentParser) -> None:
         help=(
             "Optional metadata CSV used to seed contact-identifier blocklists "
             "during anonymization."
+        ),
+    )
+    p.add_argument(
+        "--mapping-audit-dir",
+        default=None,
+        help=(
+            "Write private per-file original-to-fake mapping sidecars; "
+            "the output contains source PII"
         ),
     )
 
