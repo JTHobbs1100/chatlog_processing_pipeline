@@ -23,7 +23,9 @@ from .detectors import guess_source_interface
 from .doc_titles import parse_docx_by_fonts
 from .parsers import (
     ParseFailed,
+    looks_like_chatgpt_export,
     looks_like_claude_export,
+    parse_chatgpt_json,
     parse_claude_json,
     parse_with_labels,
     try_parse_any,
@@ -50,6 +52,20 @@ SUPPORTED_EXTS = {
     ".html",
     ".htm",
 }
+
+def describe_normalization(rel_path: str, out: Dict[str, Any]) -> Optional[str]:
+    """Return a one-line summary of what a normalizer kept and dropped."""
+
+    stats = out.get("stats") if isinstance(out, dict) else None
+    if not isinstance(stats, dict):
+        return None
+    dropped = stats.get("dropped_conversations") or 0
+    line = f"{rel_path}: kept {stats.get('kept_conversations', 0)} conversations"
+    line += f", dropped {dropped} empty conversations"
+    if stats.get("dropped_messages"):
+        line += f" ({stats['dropped_messages']} empty messages)"
+    return line
+
 
 @dataclass
 class ParseMeta:
@@ -85,8 +101,8 @@ def _process_one_file(
     rel = src.relative_to(in_root)
     ext = src.suffix.lower()
 
-    # Claude.ai `conversations.json` exports are normalized to the standard
-    # schema; every other JSON file is copied through without modification.
+    # Claude.ai and ChatGPT `conversations.json` exports are normalized to the
+    # standard linear schema; every other JSON file is copied through unchanged.
     if ext == ".json":
         rel = src.relative_to(in_root)
         dest = out_root / rel
@@ -99,37 +115,52 @@ def _process_one_file(
         except (OSError, UnicodeDecodeError, ValueError):
             data = None
 
-        if forced == "claude_json" or (
-            data is not None and looks_like_claude_export(data)
-        ):
+        normalizers = (
+            ("claude_json", "claude-json", looks_like_claude_export, parse_claude_json),
+            (
+                "chatgpt_json",
+                "chatgpt-json",
+                looks_like_chatgpt_export,
+                parse_chatgpt_json,
+            ),
+        )
+        for method_name, source_guess, looks_like, parse_fn in normalizers:
+            is_forced = forced == method_name
+            if not (is_forced or (data is not None and looks_like(data))):
+                continue
             try:
-                parsed = parse_claude_json(data)
+                parsed = parse_fn(data)
             except ParseFailed as e:
-                if forced == "claude_json":
+                if is_forced:
                     return (
                         ParseMeta(
                             str(src),
                             str(rel),
                             ext,
-                            "claude-json",
+                            source_guess,
                             False,
-                            f"claude_json parse failed: {e}",
+                            f"{method_name} parse failed: {e}",
                             0,
                         ),
                         None,
                     )
-            else:
-                convs = parsed.get("conversations", [])
-                msg_count = sum(len(c.get("messages", [])) for c in convs)
-                meta_local = ParseMeta(
-                    str(src), str(rel), ext, "claude-json", True, None, msg_count
-                )
-                out = {
-                    "meta": normalize_meta_dict(meta_local),
-                    "conversations": convs,
-                    "notes": parsed.get("notes", ""),
-                }
-                return meta_local, out
+                continue
+            convs = parsed.get("conversations", [])
+            msg_count = sum(len(c.get("messages", [])) for c in convs)
+            meta_local = ParseMeta(
+                str(src), str(rel), ext, source_guess, True, None, msg_count
+            )
+            out = {
+                "meta": normalize_meta_dict(meta_local),
+                "conversations": convs,
+                "notes": parsed.get("notes", ""),
+                "stats": {
+                    "kept_conversations": len(convs),
+                    "dropped_conversations": parsed.get("dropped_conversations", 0),
+                    "dropped_messages": parsed.get("dropped_messages"),
+                },
+            }
+            return meta_local, out
 
         ensure_dir(dest.parent)
         shutil.copy2(src, dest)
@@ -613,6 +644,9 @@ def _process_zip(
                 if meta.ok and out is not None and meta.file_ext != ".zip":
                     write_parsed_output(sub_out_root, meta, out)
                     ok_count += 1
+                    summary = describe_normalization(f"{rel}/{meta.rel_path}", out)
+                    if summary:
+                        print(f"[JSON] {summary}", flush=True)
                 elif meta.file_ext == ".zip":
                     ok_count += 1
 

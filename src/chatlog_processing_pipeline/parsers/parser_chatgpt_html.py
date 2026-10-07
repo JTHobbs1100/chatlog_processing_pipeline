@@ -1,10 +1,10 @@
-"""Pass-through parser for ChatGPT HTML exports embedding `jsonData`.
+"""Parser for ChatGPT HTML exports embedding `jsonData`.
 
 The HTML export includes a JavaScript variable `jsonData` that contains an
-array of conversation objects. This parser now extracts that payload and
-returns it unchanged under a top-level `conversations` key, behaving like a
-JSON pass-through. Older behavior that attempted to linearize messages is no
-longer supported.
+array of conversation objects. This parser extracts that payload and
+normalizes mapping-tree conversations to the linear schema (see
+`parser_chatgpt_json`). Payloads that are not mapping-tree conversations are
+returned unchanged under a top-level `conversations` key.
 """
 
 from __future__ import annotations
@@ -111,6 +111,13 @@ def parse(text: str, *, strict: bool = True) -> Parsed:
 
     unescaped = _unescape_html(data)
 
+    from .parser_chatgpt_json import looks_like_chatgpt_export, normalize_conversations
+
+    if looks_like_chatgpt_export(unescaped):
+        return {
+            "conversations": normalize_conversations(unescaped),
+            "notes": "chatgpt_html_export_normalized",
+        }
     return {
         "conversations": unescaped,
         "notes": "chatgpt_html_export_passthrough",

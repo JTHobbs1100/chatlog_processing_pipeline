@@ -9,6 +9,7 @@ schema instead of passing the raw payload through.
 
 from __future__ import annotations
 
+import mimetypes
 from typing import Any, Dict, List
 
 from .parser_chatgpt_md import ParseFailed
@@ -21,30 +22,52 @@ _SENDER_TO_ROLE = {
 }
 
 
+def _file_placeholder(file_name: Any = None, mime: Any = None) -> str:
+    """Placeholder for an uploaded file; names are never recorded."""
+
+    mime_type = mime.strip().lower() if isinstance(mime, str) else ""
+    if not mime_type and isinstance(file_name, str):
+        mime_type = (mimetypes.guess_type(file_name)[0] or "").lower()
+    if mime_type.startswith("image/"):
+        return "[image]"
+    if mime_type.startswith("video/"):
+        return "[video]"
+    if mime_type.startswith("audio/"):
+        return "[audio]"
+    return f"[file: {mime_type}]" if mime_type else "[file]"
+
+
 def _message_content(message: Dict[str, Any]) -> str:
-    """Return the best-effort text content of one Claude chat message."""
+    """Return the text of one Claude chat message, with file placeholders.
+
+    Thinking and tool blocks are not conversation text and are dropped.
+    Uploaded files and attachments become placeholders such as ``[image]`` or
+    ``[file: application/pdf]``; their names and extracted text are not kept.
+    """
 
     parts: List[str] = []
     content_blocks = message.get("content")
     if isinstance(content_blocks, list):
         for block in content_blocks:
-            if not isinstance(block, dict):
-                continue
-            block_type = block.get("type")
-            if block_type == "text":
+            if isinstance(block, dict) and block.get("type") == "text":
                 text = block.get("text")
-            elif block_type == "thinking":
-                text = block.get("thinking")
-            else:
-                text = None
-            if isinstance(text, str) and text.strip():
-                parts.append(text)
+                if isinstance(text, str) and text.strip():
+                    parts.append(text)
 
-    if parts:
-        return "\n\n".join(parts)
+    if not parts:
+        fallback = message.get("text")
+        if isinstance(fallback, str) and fallback.strip():
+            parts.append(fallback)
 
-    fallback = message.get("text")
-    return fallback if isinstance(fallback, str) else ""
+    for uploaded in message.get("files") or []:
+        if isinstance(uploaded, dict):
+            parts.append(_file_placeholder(uploaded.get("file_name")))
+    for attachment in message.get("attachments") or []:
+        if isinstance(attachment, dict):
+            parts.append(
+                _file_placeholder(attachment.get("file_name"), attachment.get("file_type"))
+            )
+    return "\n\n".join(parts)
 
 
 def _has_claude_chat_messages(conversation: Any) -> bool:
@@ -87,6 +110,8 @@ def parse(data: Any) -> Parsed:
         raise ParseFailed("claude json: no chat_messages with human/assistant sender")
 
     conversations: List[Dict[str, Any]] = []
+    empty_messages = 0
+    empty_conversations = 0
     for conv in data:
         if not isinstance(conv, dict):
             continue
@@ -99,8 +124,15 @@ def parse(data: Any) -> Parsed:
                 role = _SENDER_TO_ROLE.get(message.get("sender"))
                 if role is None:
                     continue
-                messages.append({"role": role, "content": _message_content(message)})
+                content = _message_content(message)
+                if not content:
+                    empty_messages += 1
+                    continue
+                messages.append({"role": role, "content": content})
 
+        if not messages:
+            empty_conversations += 1
+            continue
         conversations.append(
             {
                 "title": conv.get("name") or "",
@@ -111,7 +143,15 @@ def parse(data: Any) -> Parsed:
             }
         )
 
+    notes = "claude_json_normalized"
+    if empty_messages or empty_conversations:
+        notes += (
+            f"; dropped {empty_messages} empty messages and "
+            f"{empty_conversations} conversations with no content"
+        )
     return {
         "conversations": conversations,
-        "notes": "claude_json_normalized",
+        "notes": notes,
+        "dropped_conversations": empty_conversations,
+        "dropped_messages": empty_messages,
     }

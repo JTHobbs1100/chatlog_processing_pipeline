@@ -67,20 +67,26 @@ label maps to `user` and the remaining labels map to `assistant`.
 
 ## ChatGPT Branch Selection
 
-ChatGPT exports often store a conversation as a `mapping` tree rather than a
-single linear thread. The parser preserves the raw structure in JSON. When
-loading or rendering a conversation as one visible transcript, the pipeline
-chooses a branch.
+ChatGPT exports store a conversation as a `mapping` tree rather than a single
+thread. Branches come from regenerated responses, edited-and-resent turns, and
+tool or retrieval steps. `--parse` linearizes each tree into one thread:
 
-The default path-selection behavior prefers the strongest visible
-user/assistant thread rather than simply following the currently active node.
-In practice this is meant to avoid short side branches, hidden automation
-messages, and regenerate artifacts dominating the visible transcript.
+- If the export names a `current_node`, follow its parent chain to the root.
+  Otherwise take the deepest leaf by parent-depth and walk its ancestors.
+- Omit nodes flagged `is_visually_hidden_from_conversation` (typically
+  system, tool, or context messages). They are not shown in the UI, although
+  they can influence the visible reply.
+- Keep only `user` and `assistant` turns. Non-text parts and attachments
+  become placeholders so turn order and context survive: `[image]`,
+  `[audio]`, `[video]`, `[audio/video]`, and `[file: <mime type>]` for
+  attachments such as PDFs (file names are not recorded). A turn with text and
+  an attachment keeps the text and appends the placeholder.
+- Drop model reasoning nodes (`thoughts`, `reasoning_recap`), turns with
+  nothing in them, visible system or tool nodes, and all other branches.
 
-For reviewer-facing HTML, hidden conversation nodes are omitted. This is why
-the HTML export can differ from the raw JSON payload: the JSON may contain
-multiple branches and hidden tool or system nodes, while the HTML shows one
-main visible thread.
+Conversation `id`, `create_time` and `update_time` are kept as `uuid`,
+`created_at` and `updated_at`. ChatGPT HTML exports (`chat.html`) are
+normalized the same way.
 
 ## Plan-Based Parsing
 
@@ -121,18 +127,25 @@ process_chats_plan \
 - `docx_titles` uses DOCX title and heading cues.
 - `docx_text` uses plain DOCX text extraction and heuristics.
 - `chatgpt_html` parses ChatGPT export HTML.
-- `chatgpt_json` treats ChatGPT export JSON as pass-through structured input.
+- `chatgpt_json` normalizes ChatGPT `conversations.json` exports (mapping
+  trees) into the standard linear `messages` schema.
 - `claude_json` normalizes Claude.ai `conversations.json` exports into the
   standard `messages` schema.
 
 Notes:
 
-- Claude.ai `conversations.json` exports (a list of conversations with
-  `chat_messages`/`sender` turns) are auto-detected and normalized into
-  `{role, content}` messages. Force `claude_json` to require that
-  normalization and fail loudly if a file doesn't match.
-- Other JSON files, including ChatGPT exports, are copied through as
-  structured pass-through inputs.
+- Claude.ai and ChatGPT `conversations.json` exports are auto-detected and
+  normalized to one linear schema: `conversations: [{title, uuid, created_at,
+  updated_at, messages: [{role, content}]}]`. Force `claude_json` or
+  `chatgpt_json` to require that normalization and fail loudly if a file
+  doesn't match.
+- Both normalizers keep only conversation text. Claude `thinking`, `tool_use`
+  and `tool_result` blocks are dropped. Uploaded files and attachments become
+  placeholders (`[image]`, `[file: application/pdf]`, ...) with names and
+  extracted contents left out. Messages with nothing in them, and
+  conversations left with no messages, are dropped and counted in the output's
+  `notes`.
+- Other JSON files are copied through as structured pass-through inputs.
 - When `conv_separator` is set, text sources are split before parsing each
   segment.
 

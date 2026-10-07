@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .allow_lists import merge_allow_lists
-from .processor import ParseMeta, _process_one_file
+from .processor import ParseMeta, _process_one_file, describe_normalization
 from .presidio_config import DEFAULT_SCORE_THRESHOLD
 from .redactor import run_redaction
 from .textloaders import LoadError
@@ -565,6 +565,10 @@ def cmd_parse(args) -> Path:
             if meta.ok and out is not None:
                 # Normalized export (e.g. Claude): write it under the input name.
                 write_parsed_output(out_root, meta, out)
+                summary = describe_normalization(meta.rel_path, out)
+                if summary:
+                    # Always shown, even without --verbose.
+                    print(f"[JSON] {summary}", flush=True)
                 logger.info("[JSON] %s (normalized)", meta.rel_path)
             else:
                 logger.info("[JSON] %s (pass-through)", meta.rel_path)
