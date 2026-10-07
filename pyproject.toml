@@ -39,7 +39,7 @@ where = ["src"]
 chatlog_processing_pipeline = ["assets/*.css", "assets/*.js"]
 
 [tool.uv.sources]
-llm-delusions-annotations = { path = "../llm-delusions-annotations", editable = true }
+llm-delusions-annotations = { path = "../llm-general-annotations", editable = true }
 
 [dependency-groups]
 dev = [

@@ -14,7 +14,7 @@ make init
 That will:
 - create `.venv`
 - sync runtime and dev dependencies
-- install the local sibling repo `../llm-delusions-annotations` as an editable
+- install the local sibling repo `../llm-general-annotations` as an editable
   dependency via `tool.uv.sources`
 
 The reviewer UI assets are checked into

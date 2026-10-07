@@ -478,7 +478,7 @@ dev = [
 requires-dist = [
     { name = "en-core-web-lg", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl" },
     { name = "faker" },
-    { name = "llm-delusions-annotations", editable = "../llm-delusions-annotations" },
+    { name = "llm-delusions-annotations", editable = "../llm-general-annotations" },
     { name = "pdfminer-six" },
     { name = "presidio-analyzer" },
     { name = "presidio-anonymizer" },
@@ -1157,7 +1157,7 @@ wheels = [
 [[package]]
 name = "llm-delusions-annotations"
 version = "0.1.0"
-source = { editable = "../llm-delusions-annotations" }
+source = { editable = "../llm-general-annotations" }
 dependencies = [
     { name = "json-repair" },
     { name = "litellm" },
