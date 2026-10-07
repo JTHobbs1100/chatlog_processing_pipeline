@@ -11,6 +11,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import zipfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -26,6 +27,9 @@ from .util import (
     html_contains_snippet,
     write_parsed_output,
 )
+
+# `conversations.json` and sharded `conversations-001.json` exports.
+_CONVERSATIONS_JSON_RE = re.compile(r"conversations(-\d+)?\.json")
 
 
 def main() -> None:
@@ -444,34 +448,43 @@ def cmd_parse(args) -> Path:
                 continue
             files.append(Path(dirpath) / fn)
 
-    # Prefer conversations.json over chat.html when both exist in the same folder.
-    # Perform a light sanity check that the JSON appears to match the HTML by
-    # looking for a known snippet (title or first content) from the JSON in the HTML.
+    # Prefer conversations JSON over chat.html when both exist in the same folder.
+    # `conversations.json` and sharded `conversations-NNN.json` files are treated
+    # as equally valid. Perform a light sanity check that the JSON appears to
+    # match the HTML by looking for a known snippet (title or first content)
+    # from the JSON in the HTML.
     skip_html: set[Path] = set()
 
-    # Build a quick index of directory -> {chat.html, conversations.json}
-    by_dir: dict[Path, dict[str, Path]] = {}
+    # Build a quick index of directory -> chat.html and conversations JSON files.
+    html_by_dir: dict[Path, Path] = {}
+    convs_by_dir: dict[Path, list[Path]] = {}
     for p in files:
-        parent = p.parent
         name = p.name.lower()
-        if name in {"chat.html", "conversations.json"}:
-            d = by_dir.setdefault(parent, {})
-            d[name] = p
+        if name == "chat.html":
+            html_by_dir[p.parent] = p
+        elif _CONVERSATIONS_JSON_RE.fullmatch(name):
+            convs_by_dir.setdefault(p.parent, []).append(p)
 
-    for parent, names in by_dir.items():
-        chat = names.get("chat.html")
-        conv = names.get("conversations.json")
-        if not chat or not conv:
+    for parent, chat in html_by_dir.items():
+        convs = sorted(convs_by_dir.get(parent, []))
+        if not convs:
             continue
-        # Light sanity check: look for a JSON snippet in the HTML
-        snippet = find_json_snippet(conv)
+        # Light sanity check: look for a JSON snippet from any shard in the HTML
         same = False
-        if snippet:
-            same = html_contains_snippet(chat, snippet)
-        else:
+        found_snippet = False
+        for conv in convs:
+            snippet = find_json_snippet(conv)
+            if snippet:
+                found_snippet = True
+                if html_contains_snippet(chat, snippet):
+                    same = True
+                    break
+        if not found_snippet:
             # Fallback: if both files are reasonably sized, assume equivalence
             try:
-                size_ok = chat.stat().st_size > 0 and conv.stat().st_size > 0
+                size_ok = chat.stat().st_size > 0 and all(
+                    c.stat().st_size > 0 for c in convs
+                )
             except OSError:
                 size_ok = False
             same = size_ok
@@ -479,7 +492,7 @@ def cmd_parse(args) -> Path:
         if same:
             skip_html.add(chat)
             logger.info(
-                "[SKIP-HTML-DUPLICATE] %s (using conversations.json in same folder)",
+                "[SKIP-HTML-DUPLICATE] %s (using conversations JSON in same folder)",
                 chat.relative_to(in_root),
             )
 
