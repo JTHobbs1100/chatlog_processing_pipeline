@@ -33,6 +33,7 @@ from .pdf_rule_boxes import parse_pdf_by_horizontal_rules
 from .textloaders import LoadError, load_text_from_file
 from .util import (
     ensure_dir,
+    is_conversations_json,
     is_probably_text_by_content,
     normalize_meta_dict,
     write_parsed_output,
@@ -74,6 +75,7 @@ def _process_one_file(
     forced_method: Optional[str] = None,
     role_labels: Optional[Iterable[str]] = None,
     conv_separator: Optional[str] = None,
+    only_conversations: bool = False,
 ) -> Tuple[ParseMeta, Optional[Dict[str, Any]]]:
     """Parse a single file and return metadata plus parsed output.
 
@@ -154,7 +156,9 @@ def _process_one_file(
             )
 
     if ext == ".zip":
-        return _process_zip(src, in_root, out_root, verbose, strict_parsing)
+        return _process_zip(
+            src, in_root, out_root, verbose, strict_parsing, only_conversations
+        )
 
     def _try_labels_first(
         text: str,
@@ -573,6 +577,7 @@ def _process_zip(
     out_root: Path,
     verbose: bool,
     strict_parsing: bool,
+    only_conversations: bool = False,
 ) -> Tuple[ParseMeta, Optional[Dict[str, Any]]]:
     """Process a zip archive by extracting and parsing its members."""
     rel = src_zip.relative_to(in_root)
@@ -590,8 +595,19 @@ def _process_zip(
         for root, _, files in os.walk(extracted_root):
             for fn in files:
                 sp = Path(root) / fn
+                if (
+                    only_conversations
+                    and sp.suffix.lower() != ".zip"
+                    and not is_conversations_json(sp)
+                ):
+                    continue
                 meta, out = _process_one_file(
-                    sp, extracted_root, sub_out_root, verbose, strict_parsing
+                    sp,
+                    extracted_root,
+                    sub_out_root,
+                    verbose,
+                    strict_parsing,
+                    only_conversations=only_conversations,
                 )
                 # Write child outputs here so the parent CLI does not need to.
                 if meta.ok and out is not None and meta.file_ext != ".zip":

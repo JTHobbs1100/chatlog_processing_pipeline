@@ -3,10 +3,21 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .chat_loader import load_chats_for_file
+
+
+# `conversations.json` and sharded `conversations-001.json` exports.
+CONVERSATIONS_JSON_RE = re.compile(r"conversations(-\d+)?\.json", re.IGNORECASE)
+
+
+def is_conversations_json(path: Path) -> bool:
+    """Return True for ``conversations.json`` and ``conversations-NNN.json``."""
+
+    return CONVERSATIONS_JSON_RE.fullmatch(path.name) is not None
 
 
 def ensure_dir(p: Path) -> None:

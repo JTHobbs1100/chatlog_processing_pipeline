@@ -55,6 +55,9 @@ process_chats \
   --method pdf_text
 ```
 
+Pass `--only-conversations` to process only `conversations.json` and sharded
+`conversations-NNN.json` files, including inside zips.
+
 If a raw file contains multiple conversations in one text stream, pass
 `--conv-separator` with either a literal string or a regex.
 

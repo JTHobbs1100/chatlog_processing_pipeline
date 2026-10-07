@@ -11,7 +11,6 @@ import argparse
 import json
 import logging
 import os
-import re
 import zipfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
@@ -23,14 +22,12 @@ from .redactor import run_redaction
 from .textloaders import LoadError
 from .util import (
     ensure_dir,
+    CONVERSATIONS_JSON_RE,
     find_json_snippet,
     html_contains_snippet,
+    is_conversations_json,
     write_parsed_output,
 )
-
-# `conversations.json` and sharded `conversations-001.json` exports.
-_CONVERSATIONS_JSON_RE = re.compile(r"conversations(-\d+)?\.json")
-
 
 def main() -> None:
     """Main CLI dispatcher.
@@ -59,6 +56,15 @@ def main() -> None:
         "--single-thread",
         action="store_true",
         help="Force single-threaded parsing (no multiprocessing). Use for GUI/Windows.",
+    )
+    p_main.add_argument(
+        "--only-conversations",
+        action="store_true",
+        help=(
+            "Only process conversations.json / conversations-NNN.json files "
+            "(also inside zips). Skips chat.html, account metadata, and "
+            "everything else."
+        ),
     )
     p_main.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     p_main.add_argument("--log-file", help="Write a detailed log under the output dir")
@@ -448,6 +454,12 @@ def cmd_parse(args) -> Path:
                 continue
             files.append(Path(dirpath) / fn)
 
+    if getattr(args, "only_conversations", False):
+        # Zips are kept so their members can be filtered during extraction.
+        files = [
+            p for p in files if p.suffix.lower() == ".zip" or is_conversations_json(p)
+        ]
+
     # Prefer conversations JSON over chat.html when both exist in the same folder.
     # `conversations.json` and sharded `conversations-NNN.json` files are treated
     # as equally valid. Perform a light sanity check that the JSON appears to
@@ -462,7 +474,7 @@ def cmd_parse(args) -> Path:
         name = p.name.lower()
         if name == "chat.html":
             html_by_dir[p.parent] = p
-        elif _CONVERSATIONS_JSON_RE.fullmatch(name):
+        elif CONVERSATIONS_JSON_RE.fullmatch(name):
             convs_by_dir.setdefault(p.parent, []).append(p)
 
     for parent, chat in html_by_dir.items():
@@ -571,6 +583,7 @@ def cmd_parse(args) -> Path:
                     forced_method=args.method,
                     role_labels=role_labels,
                     conv_separator=args.conv_separator,
+                    only_conversations=getattr(args, "only_conversations", False),
                 )
             except (OSError, zipfile.BadZipFile, LoadError) as e:
                 fail += 1
@@ -598,6 +611,7 @@ def cmd_parse(args) -> Path:
                     args.method,
                     role_labels,
                     args.conv_separator,
+                    getattr(args, "only_conversations", False),
                 )
                 futures[fut] = src
 
