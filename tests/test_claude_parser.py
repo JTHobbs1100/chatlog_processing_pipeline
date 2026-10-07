@@ -141,3 +141,31 @@ def test_process_one_file_passes_through_chatgpt_export(tmp_path):
     assert meta.source_guess == "json-pass-through"
     assert out is None
     assert (out_root / "conversations.json").exists()
+
+
+def test_cli_parse_writes_normalized_claude_export(tmp_path, monkeypatch):
+    """Regression: Claude output must be written by `process_chats --parse`."""
+    from chatlog_processing_pipeline.commands import main
+
+    in_root = tmp_path / "in" / "export_a"
+    in_root.mkdir(parents=True)
+    (in_root / "conversations.json").write_text(
+        json.dumps(SAMPLE_EXPORT), encoding="utf-8"
+    )
+    out_root = tmp_path / "out"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "process_chats",
+            "--parse",
+            "--single-thread",
+            "--input",
+            str(tmp_path / "in"),
+            "--output-dir",
+            str(out_root),
+        ],
+    )
+    main()
+
+    written = json.loads((out_root / "export_a" / "conversations.json").read_text())
+    assert written["conversations"][0]["messages"][0]["role"] == "user"

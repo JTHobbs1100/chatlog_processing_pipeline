@@ -4,3 +4,5 @@ __pycache__/
 .pytest_cache/
 .pylint.d/
 .DS_Store
+parsed/
+anonymized/

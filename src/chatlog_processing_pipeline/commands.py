@@ -552,7 +552,12 @@ def cmd_parse(args) -> Path:
             return
         if meta.file_ext == ".json":
             ok += 1
-            logger.info("[JSON] %s (pass-through)", meta.rel_path)
+            if meta.ok and out is not None:
+                # Normalized export (e.g. Claude): write it under the input name.
+                write_parsed_output(out_root, meta, out)
+                logger.info("[JSON] %s (normalized)", meta.rel_path)
+            else:
+                logger.info("[JSON] %s (pass-through)", meta.rel_path)
             return
 
         if meta.ok and out is not None:

@@ -102,7 +102,11 @@ def write_parsed_output(out_root: Path, meta, out: Dict[str, Any]) -> Path:
     """
 
     base = out_root / meta.rel_path
-    out_path = base.with_name(base.name + ".json")
+    # Normalized JSON inputs keep their name instead of becoming ``x.json.json``.
+    if base.suffix.lower() == ".json":
+        out_path = base
+    else:
+        out_path = base.with_name(base.name + ".json")
     payload: Dict[str, Any] = {
         "meta": normalize_meta_dict(meta),
         "notes": out.get("notes", ""),
