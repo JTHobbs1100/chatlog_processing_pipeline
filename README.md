@@ -33,8 +33,8 @@ The reviewer UI assets are checked into
 ## Parsing
 
 `process_chats --parse` converts raw transcript exports into normalized JSON.
-Supported source formats include ChatGPT HTML and JSON exports, PDFs, DOCX,
-RTF, ODT, TXT, and ZIP containers.
+Supported source formats include ChatGPT HTML and JSON exports, Claude.ai JSON
+exports, PDFs, DOCX, RTF, ODT, TXT, and ZIP containers.
 
 Basic example:
 
@@ -119,11 +119,17 @@ process_chats_plan \
 - `docx_text` uses plain DOCX text extraction and heuristics.
 - `chatgpt_html` parses ChatGPT export HTML.
 - `chatgpt_json` treats ChatGPT export JSON as pass-through structured input.
+- `claude_json` normalizes Claude.ai `conversations.json` exports into the
+  standard `messages` schema.
 
 Notes:
 
-- JSON files handled as ChatGPT exports are copied through as structured
-  pass-through inputs.
+- Claude.ai `conversations.json` exports (a list of conversations with
+  `chat_messages`/`sender` turns) are auto-detected and normalized into
+  `{role, content}` messages. Force `claude_json` to require that
+  normalization and fail loudly if a file doesn't match.
+- Other JSON files, including ChatGPT exports, are copied through as
+  structured pass-through inputs.
 - When `conv_separator` is set, text sources are split before parsing each
   segment.
 

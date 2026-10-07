@@ -7,6 +7,7 @@ are handled via a dedicated helper that expands them and processes members.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -20,7 +21,13 @@ from docx.opc.exceptions import PackageNotFoundError
 
 from .detectors import guess_source_interface
 from .doc_titles import parse_docx_by_fonts
-from .parsers import ParseFailed, parse_with_labels, try_parse_any
+from .parsers import (
+    ParseFailed,
+    looks_like_claude_export,
+    parse_claude_json,
+    parse_with_labels,
+    try_parse_any,
+)
 from .pdf_highlight_roles import parse_pdf_with_highlight_roles
 from .pdf_rule_boxes import parse_pdf_by_horizontal_rules
 from .textloaders import LoadError, load_text_from_file
@@ -42,7 +49,6 @@ SUPPORTED_EXTS = {
     ".html",
     ".htm",
 }
-
 
 @dataclass
 class ParseMeta:
@@ -77,10 +83,52 @@ def _process_one_file(
     rel = src.relative_to(in_root)
     ext = src.suffix.lower()
 
-    # Pass-through for pre-parsed JSON files: copy without modification.
+    # Claude.ai `conversations.json` exports are normalized to the standard
+    # schema; every other JSON file is copied through without modification.
     if ext == ".json":
         rel = src.relative_to(in_root)
         dest = out_root / rel
+        forced = forced_method.lower() if forced_method else None
+
+        data: Any = None
+        try:
+            with src.open("r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, UnicodeDecodeError, ValueError):
+            data = None
+
+        if forced == "claude_json" or (
+            data is not None and looks_like_claude_export(data)
+        ):
+            try:
+                parsed = parse_claude_json(data)
+            except ParseFailed as e:
+                if forced == "claude_json":
+                    return (
+                        ParseMeta(
+                            str(src),
+                            str(rel),
+                            ext,
+                            "claude-json",
+                            False,
+                            f"claude_json parse failed: {e}",
+                            0,
+                        ),
+                        None,
+                    )
+            else:
+                convs = parsed.get("conversations", [])
+                msg_count = sum(len(c.get("messages", [])) for c in convs)
+                meta_local = ParseMeta(
+                    str(src), str(rel), ext, "claude-json", True, None, msg_count
+                )
+                out = {
+                    "meta": normalize_meta_dict(meta_local),
+                    "conversations": convs,
+                    "notes": parsed.get("notes", ""),
+                }
+                return meta_local, out
+
         ensure_dir(dest.parent)
         shutil.copy2(src, dest)
         return (

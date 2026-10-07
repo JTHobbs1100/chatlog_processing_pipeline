@@ -7,6 +7,8 @@ from typing import Any, Dict, Iterable
 from .parser_chatgpt_html import parse as _parse_chatgpt_html
 from .parser_chatgpt_md import ParseFailed
 from .parser_chatgpt_md import parse as _parse_chatgpt_md
+from .parser_claude_json import looks_like_claude_export
+from .parser_claude_json import parse as parse_claude_json
 from .parser_label_colon import parse as _parse_label_colon
 
 Parsed = Dict[str, Any]

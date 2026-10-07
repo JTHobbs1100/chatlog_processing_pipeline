@@ -81,6 +81,7 @@ def main() -> None:
             "docx_text",
             "chatgpt_html",
             "chatgpt_json",
+            "claude_json",
         ],
         help=(
             "Force a parser method for all files. "
