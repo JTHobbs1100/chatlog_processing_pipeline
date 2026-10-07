@@ -166,6 +166,43 @@ the same behavior to file and directory names. Exact matching remains the
 default; select `--allow-list-match regex` only for intentionally written
 regular expressions.
 
+### Presidio Tuning
+
+Content anonymization uses settings tuned for chat transcripts
+(`src/chatlog_processing_pipeline/presidio_config.py`):
+
+- Default entities: `PERSON`, `EMAIL_ADDRESS`, `PHONE_NUMBER`, `LOCATION`,
+  `URL`, `IP_ADDRESS`, `CREDIT_CARD`, `IBAN_CODE`, `US_SSN`, `US_PASSPORT`,
+  `US_DRIVER_LICENSE`, `US_BANK_NUMBER`, `CRYPTO`, `MEDICAL_LICENSE`. Names
+  and paths use the same list unless `--name-entities` is given.
+- Off by default: `DATE_TIME` (fires on "last week"), `NRP`, `ORGANIZATION`
+  (noisy on informal text; add it with `--organizations`).
+- Default `--threshold` is 0.4.
+- Built-in allow-list of AI and tool names (ChatGPT, Claude, Gemini, Copilot,
+  ...). A span is kept if it is such a name, or such a name plus only
+  lowercase filler words.
+- Overlapping detections are resolved by keeping the longest span, then the
+  highest score.
+
+No street-address or postcode recognizers are included.
+
+### Detection Reports
+
+Every `--anon` run also writes CSVs listing what was removed, so you can spot
+false positives to add to an allow-list. They go to a sibling folder named
+`<anon-output>_detections_SENSITIVE/`:
+
+- one `<file>.detections.csv` per anonymized file, with columns `scope`
+  (`content` or `name_or_path`), `entity_type`, `original_text`, `count`,
+  `avg_score`
+- `_summary.csv` across all files, sorted by how many files each term appears
+  in. Terms that are not PII (for example `Claude` flagged as `PERSON`) are the
+  ones to put in `--allow-list-file`.
+
+Files with no detections get no CSV, and `--dry-run` writes none. Terms matched
+from `--metadata-csv` appear as entity type `BLOCKLIST`. These CSVs contain the
+original PII and must not be published or committed.
+
 For a private review of every Faker replacement, pass
 `--mapping-audit-dir <DIR>`. The directory receives one sidecar per processed
 file with the entity type, original span, replacement, and occurrence count.

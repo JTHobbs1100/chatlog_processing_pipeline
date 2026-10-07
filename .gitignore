@@ -6,3 +6,4 @@ __pycache__/
 .DS_Store
 parsed/
 anonymized/
+anonymized_detections_SENSITIVE/

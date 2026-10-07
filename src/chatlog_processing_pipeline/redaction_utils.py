@@ -17,6 +17,8 @@ from presidio_analyzer import AnalyzerEngine
 from presidio_anonymizer import AnonymizerEngine
 from presidio_anonymizer.entities import OperatorConfig
 
+from .presidio_config import is_allowlisted, resolve_overlaps
+
 WINDOWS_RESERVED = {
     "CON",
     "PRN",
@@ -125,6 +127,42 @@ def op_params_for(
     return {}
 
 
+_DETECTION_LOG = threading.local()
+
+
+def reset_detection_log() -> None:
+    """Start collecting detections for one file on this thread."""
+    _DETECTION_LOG.items = []
+
+
+def consume_detection_log() -> List[Tuple[str, str, str, float]]:
+    """Return ``(scope, entity_type, original, score)`` rows and stop collecting."""
+    items = getattr(_DETECTION_LOG, "items", None) or []
+    _DETECTION_LOG.items = None
+    return items
+
+
+def log_detection(scope: str, entity_type: str, original: str, score: float) -> None:
+    """Record one detection if collection is active on this thread."""
+    items = getattr(_DETECTION_LOG, "items", None)
+    if items is not None:
+        items.append((scope, entity_type, original, float(score)))
+
+
+def _log_results(text: str, results, scope: str) -> None:
+    """Log the spans that will actually be replaced."""
+    if getattr(_DETECTION_LOG, "items", None) is None:
+        return
+    for res in results:
+        log_detection(scope, res.entity_type, text[res.start : res.end], res.score)
+
+
+def _filter_results(text: str, results) -> list:
+    """Drop allow-listed AI/tool names, then resolve overlapping spans."""
+    kept = [r for r in results if not is_allowlisted(text[r.start : r.end])]
+    return resolve_overlaps(kept)
+
+
 def _apply_faker(
     text: str,
     results,
@@ -169,8 +207,10 @@ def anonymize_text(
         allow_list=allow_list,
         allow_list_match=allow_list_match,
     )
+    results = _filter_results(text, results)
     if not results:
         return text
+    _log_results(text, results, "content")
     if operator == "faker":
         if faker_state is None:
             raise RuntimeError("FakerState required when operator='faker'.")
@@ -205,8 +245,10 @@ def anonymize_string(
         allow_list=allow_list,
         allow_list_match=allow_list_match,
     )
+    results = _filter_results(name, results)
     if not results:
         return name
+    _log_results(name, results, "name_or_path")
     if operator == "faker":
         if faker_state is None:
             raise RuntimeError("FakerState required when operator='faker'.")

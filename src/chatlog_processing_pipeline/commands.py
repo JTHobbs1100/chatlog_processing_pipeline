@@ -18,6 +18,7 @@ from typing import Any, Dict, Optional
 
 from .allow_lists import merge_allow_lists
 from .processor import ParseMeta, _process_one_file
+from .presidio_config import DEFAULT_SCORE_THRESHOLD
 from .redactor import run_redaction
 from .textloaders import LoadError
 from .util import (
@@ -179,6 +180,7 @@ def main() -> None:
             ),
             lang=args.lang,
             entities=args.entities,
+            organizations=args.organizations,
             score_threshold=args.threshold,
             operator=args.operator,
             replace_with=args.replace_with,
@@ -229,13 +231,21 @@ def _add_anon_args(p: argparse.ArgumentParser) -> None:
         "--entities",
         nargs="*",
         default=None,
-        help="PII entities to detect in content (default: all)",
+        help=(
+            "PII entities to detect in content (default: the curated list in "
+            "presidio_config.DEFAULT_ENTITIES)"
+        ),
     )
     p.add_argument(
         "--threshold",
         type=float,
-        default=0.35,
+        default=DEFAULT_SCORE_THRESHOLD,
         help="Score threshold for content detection",
+    )
+    p.add_argument(
+        "--organizations",
+        action="store_true",
+        help="Also redact ORGANIZATION (off by default; noisy on informal text)",
     )
     p.add_argument(
         "--operator",
@@ -290,7 +300,7 @@ def _add_anon_args(p: argparse.ArgumentParser) -> None:
         "--name-entities",
         nargs="*",
         default=None,
-        help="PII entities to detect in names",
+        help="PII entities to detect in names (default: same curated list)",
     )
     p.add_argument(
         "--name-threshold",

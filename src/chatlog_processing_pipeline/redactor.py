@@ -24,12 +24,22 @@ from presidio_analyzer.nlp_engine import NlpEngineProvider
 from presidio_anonymizer import AnonymizerEngine
 from tqdm import tqdm
 
+from .presidio_config import (
+    DEFAULT_ENTITIES,
+    enable_organization_detection,
+)
 from .redaction_utils import FakerState
 from .redaction_utils import anonymize_chunked_text as util_anonymize_chunked_text
 from .redaction_utils import anonymize_string as util_anonymize_string
 from .redaction_utils import anonymize_text as util_anonymize_text
 from .redaction_utils import compute_chunk_spans as util_compute_chunk_spans
-from .redaction_utils import is_text_file, op_params_for
+from .redaction_utils import (
+    consume_detection_log,
+    is_text_file,
+    log_detection,
+    op_params_for,
+    reset_detection_log,
+)
 from .redaction_utils import read_text as util_read_text
 from .redaction_utils import safe_fs_component, split_name_and_ext, unique_name_in
 from .util import (  # safe JSON writer with surrogate cleanup
@@ -316,6 +326,64 @@ def _write_mapping_audit(
     path.chmod(0o600)
 
 
+_DETECTION_FIELDS = ["scope", "entity_type", "original_text", "count", "avg_score"]
+
+
+def _write_detection_report(
+    path: Optional[Path], rows: List[Tuple[str, str, str, float]]
+) -> None:
+    """Write a per-file CSV of what was removed (contains original PII)."""
+    if path is None or not rows:
+        return
+    agg: Dict[Tuple[str, str, str], List[float]] = {}
+    for scope, entity_type, original, score in rows:
+        agg.setdefault((scope, entity_type, original), []).append(score)
+    ordered = sorted(agg.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(_DETECTION_FIELDS)
+        for (scope, entity_type, original), scores in ordered:
+            writer.writerow(
+                [
+                    scope,
+                    entity_type,
+                    original,
+                    len(scores),
+                    round(sum(scores) / len(scores), 2),
+                ]
+            )
+    path.chmod(0o600)
+
+
+def _write_detection_summary(detections_dir: Path) -> Optional[Path]:
+    """Aggregate every per-file CSV into ``_summary.csv`` (whitelist helper)."""
+    agg: Dict[Tuple[str, str, str], List[float]] = {}
+    files_seen: Dict[Tuple[str, str, str], int] = {}
+    for csv_path in sorted(detections_dir.rglob("*.detections.csv")):
+        with csv_path.open(encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                key = (row["scope"], row["entity_type"], row["original_text"])
+                count = int(row["count"])
+                entry = agg.setdefault(key, [0, 0.0])
+                entry[0] += count
+                entry[1] += float(row["avg_score"]) * count
+                files_seen[key] = files_seen.get(key, 0) + 1
+    if not agg:
+        return None
+    out = detections_dir / "_summary.csv"
+    ordered = sorted(agg.items(), key=lambda kv: (-files_seen[kv[0]], -kv[1][0], kv[0]))
+    with out.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            ["scope", "entity_type", "original_text", "files", "total_count", "avg_score"]
+        )
+        for key, (total, weighted) in ordered:
+            writer.writerow([*key, files_seen[key], total, round(weighted / total, 2)])
+    out.chmod(0o600)
+    return out
+
+
 def _build_redaction_params_from_task(
     task: Dict[str, object],
 ) -> Dict[str, object]:
@@ -379,6 +447,9 @@ def _build_redaction_params_from_task(
             Path(str(task["mapping_audit_path"]))
             if task.get("mapping_audit_path")
             else None
+        ),
+        "detections_path": (
+            Path(str(task["detections_path"])) if task.get("detections_path") else None
         ),
     }
     return params
@@ -472,8 +543,10 @@ def _redact_single_file(
     name_faker_state: Optional[FakerState],
     blocklist_terms: Optional[List[str]] = None,
     mapping_audit_path: Optional[Path] = None,
+    detections_path: Optional[Path] = None,
 ) -> Tuple[int, int, int]:
     """Apply redaction to a single file and report the outcome counters."""
+    reset_detection_log()
 
     def _handle_nontext() -> Tuple[int, int, int]:
         if skip_nontext:
@@ -516,6 +589,7 @@ def _redact_single_file(
 
             def _replace_func(match: re.Match) -> str:
                 val = match.group(0)
+                log_detection("content", "BLOCKLIST", val, 1.0)
                 if operator == "faker":
                     if content_faker_state is None:
                         return "REDACTED"
@@ -1107,11 +1181,42 @@ def _redact_single_file(
         content_faker_state=content_faker_state,
         name_faker_state=name_faker_state,
     )
+    detections = consume_detection_log()
+    if not dry_run:
+        _write_detection_report(detections_path, detections)
     return result
 
 
-def run_redaction(
+def run_redaction(**kwargs) -> Dict[str, int]:
+    """Run anonymization and write per-file and summary detection CSVs.
+
+    The CSVs list what was removed from each file so false positives can be
+    added to an allow-list. They contain original PII; keep them private.
+    """
+    out_dir = Path(kwargs["out_dir"]).resolve()
+    organizations = kwargs.pop("organizations", False)
+    if not kwargs.get("entities"):
+        kwargs["entities"] = list(DEFAULT_ENTITIES)
+        if organizations:
+            kwargs["entities"].append("ORGANIZATION")
+    if not kwargs.get("name_entities"):
+        kwargs["name_entities"] = list(DEFAULT_ENTITIES)
+    detections_dir = kwargs.pop("detections_dir", None)
+    if detections_dir is None:
+        detections_dir = out_dir.with_name(out_dir.name + "_detections_SENSITIVE")
+    detections_dir = Path(detections_dir).resolve()
+    counts = _run_redaction(detections_dir=detections_dir, **kwargs)
+    if not kwargs.get("dry_run") and detections_dir.exists():
+        summary = _write_detection_summary(detections_dir)
+        if summary is not None:
+            print(f"Detection report (contains PII, keep private): {detections_dir}")
+            print(f"  Summary for allow-list review: {summary}")
+    return counts
+
+
+def _run_redaction(
     *,
+    detections_dir: Optional[Path] = None,
     in_dir: Path,
     out_dir: Path,
     jobs: int,
@@ -1320,6 +1425,16 @@ def run_redaction(
                 "verbose": verbose,
                 "no_progress": True if jobs and jobs > 1 else no_progress,
                 "blocklist_terms": blocklist_terms,
+                "detections_path": (
+                    str(
+                        detections_dir
+                        / dst.relative_to(out_dir).with_suffix(
+                            dst.suffix + ".detections.csv"
+                        )
+                    )
+                    if detections_dir is not None and not dry_run
+                    else None
+                ),
                 "mapping_audit_path": (
                     str(
                         mapping_audit_dir
@@ -1502,6 +1617,8 @@ def _build_analyzer(lang: str, spacy_max_length: Optional[int]) -> AnalyzerEngin
         return cached
 
     def _bump_max_len(ae: AnalyzerEngine) -> None:
+        # Let spaCy ORG hits through; they only matter if ORGANIZATION is requested.
+        enable_organization_detection(ae)
         if not spacy_max_length:
             return
         try:
